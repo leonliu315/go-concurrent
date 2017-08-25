@@ -45,8 +45,8 @@ type node struct {
 	key         KeyFace
 	value       interface{}
 	level       int
-	deleted     bool
-	fullyLinked bool
+	deleted     int32
+	fullyLinked int32
 	m           Mutex
 }
 
@@ -95,8 +95,8 @@ func (self *ConcurrentSkipList) Init() {
 	for i := 0; i < len(slhead.forward); i++ {
 		slhead.forward[i] = sltail
 	}
-	slhead.fullyLinked = true
-	sltail.fullyLinked = true
+	slhead.fullyLinked = 1
+	sltail.fullyLinked = 1
 	self.header = slhead
 	self.tailer = sltail
 	self.rng = NewRandom(0xdeadbeef)
@@ -200,8 +200,8 @@ func (self *ConcurrentSkipList) Put(key KeyFace, value interface{}) (old_value i
 		found := search_helper(key, self.header, preds[:], succs[:])
 		if found != -1 { //之前已经插入过，更新之前的值即可
 			pnode_curr := succs[found]
-			if pnode_curr.deleted != true {
-				for pnode_curr.fullyLinked != true {
+			if atomic.LoadInt32(&pnode_curr.deleted) != 1 {
+				for atomic.LoadInt32(&pnode_curr.fullyLinked) != 1 {
 					log.Println("wait fullyLinked!")
 					runtime.Gosched()
 				}
@@ -232,7 +232,7 @@ func (self *ConcurrentSkipList) Put(key KeyFace, value interface{}) (old_value i
 				}
 			}
 
-			if (pred.deleted == true) || (pred.forward[i] != succ) {
+			if (atomic.LoadInt32(&pred.deleted) == 1) || (pred.forward[i] != succ) {
 				lockok = false
 				break
 			}
@@ -267,7 +267,7 @@ func (self *ConcurrentSkipList) Put(key KeyFace, value interface{}) (old_value i
 		newNode.prevnode = preds[0]
 		succs[0].prevnode = newNode
 
-		newNode.fullyLinked = true //关系链设置完成
+		atomic.StoreInt32(&newNode.fullyLinked, 1) //关系链设置完成
 
 		for k, _ := range node_set {
 			k.m.Unlock()
@@ -297,8 +297,8 @@ func (self *ConcurrentSkipList) UnsafePut(key KeyFace, value interface{}) (old_v
 	found := search_helper(key, self.header, preds[:], succs[:])
 	if found != -1 { //之前已经插入过，更新之前的值即可
 		pnode_curr := succs[found]
-		if pnode_curr.deleted != true {
-			for pnode_curr.fullyLinked != true {
+		if atomic.LoadInt32(&pnode_curr.deleted) != 1 {
+			for atomic.LoadInt32(&pnode_curr.fullyLinked) != 1 {
 				log.Println("wait fullyLinked!")
 				runtime.Gosched()
 			}
@@ -323,7 +323,7 @@ func (self *ConcurrentSkipList) UnsafePut(key KeyFace, value interface{}) (old_v
 	newNode.prevnode = preds[0]
 	succs[0].prevnode = newNode
 
-	newNode.fullyLinked = true
+	atomic.StoreInt32(&newNode.fullyLinked, 1)
 
 	self.length += 1
 
@@ -361,7 +361,7 @@ func (self *ConcurrentSkipList) Remove(key KeyFace) (value interface{}, err erro
 
 		locked := pnode_curr.m.TryLock()
 		if locked {
-			if pnode_curr.deleted {
+			if atomic.LoadInt32(&pnode_curr.deleted) == 1 {
 				pnode_curr.m.Unlock()
 				return
 			}
@@ -387,7 +387,7 @@ func (self *ConcurrentSkipList) Remove(key KeyFace) (value interface{}, err erro
 					break
 				}
 			}
-			if (pred.deleted == true) || (pred.fullyLinked == false) {
+			if (atomic.LoadInt32(&pred.deleted) == 1) || (atomic.LoadInt32(&pred.fullyLinked) == 0) {
 				lockok = false
 				break
 			}
@@ -411,7 +411,7 @@ func (self *ConcurrentSkipList) Remove(key KeyFace) (value interface{}, err erro
 		}
 		pnode_curr.forward[0].prevnode = preds[0]
 
-		pnode_curr.deleted = true
+		atomic.StoreInt32(&pnode_curr.deleted, 1)
 
 		for k, _ := range node_set {
 			k.m.Unlock()
@@ -510,8 +510,8 @@ func (self *ConcurrentSkipList) Clear() {
 	for i := 0; i < len(self.header.forward); i++ {
 		self.header.forward[i] = self.tailer
 	}
-	self.header.fullyLinked = true
-	self.tailer.fullyLinked = true
+	atomic.StoreInt32(&self.header.fullyLinked, 1)
+	atomic.StoreInt32(&self.tailer.fullyLinked, 1)
 	self.length = 0
 }
 
