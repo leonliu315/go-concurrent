@@ -297,17 +297,11 @@ func (self *ConcurrentSkipList) UnsafePut(key KeyFace, value interface{}) (old_v
 	found := search_helper(key, self.header, preds[:], succs[:])
 	if found != -1 { //之前已经插入过，更新之前的值即可
 		pnode_curr := succs[found]
-		if atomic.LoadInt32(&pnode_curr.deleted) != 1 {
-			for atomic.LoadInt32(&pnode_curr.fullyLinked) != 1 {
-				log.Println("wait fullyLinked!")
-				runtime.Gosched()
-			}
-			if pnode_curr.key != nil {
-				old_value = pnode_curr.value
-				pnode_curr.value = value
-			}
-			return
+		if pnode_curr.key != nil {
+			old_value = pnode_curr.value
+			pnode_curr.value = value
 		}
+		return
 	}
 
 	newNode := new(node)
@@ -322,8 +316,6 @@ func (self *ConcurrentSkipList) UnsafePut(key KeyFace, value interface{}) (old_v
 	}
 	newNode.prevnode = preds[0]
 	succs[0].prevnode = newNode
-
-	atomic.StoreInt32(&newNode.fullyLinked, 1)
 
 	self.length += 1
 
