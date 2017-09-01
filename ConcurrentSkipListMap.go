@@ -73,9 +73,9 @@ func (self *node) Level() int {
 }
 
 type ConcurrentSkipList struct {
+	length int32 //alignment
 	tailer *node
 	header *node
-	length int32
 	rng    *Random
 }
 
