@@ -32,36 +32,24 @@ func WJhash(h int32) int32 {
 	return h
 }
 
-type Element struct {
-	HashValue int32
-	Key       KeyFace
-	Value     interface{}
-	Next      *Element
-}
-
-func NewElement(h int32, k KeyFace, v interface{}, next *Element) *Element {
-	return &Element{h, k, v, next}
-}
-
 type Segment struct {
-	count int
-	//modCount   int
-	threshold  int     //增长阀值
+	count      int
+	threshold  int     //增长阈值
 	loadFactor float64 //增长因子
-	Elements   []*Element
+	Elements   []*ConcurrentSkipList
 	lock       sync.Mutex
 }
 
 func NewSegment(initialCapacity int32, lf float64) *Segment {
 	sg := new(Segment)
 	sg.loadFactor = lf
-	sg.Elements = make([]*Element, initialCapacity)
+	sg.Elements = make([]*ConcurrentSkipList, initialCapacity)
 	sg.threshold = int(float64(initialCapacity) * lf)
 
 	return sg
 }
 
-func (self *Segment) getFirst(h int32) *Element {
+func (self *Segment) getFirst(h int32) *ConcurrentSkipList {
 	elems := self.Elements
 	return elems[h&int32(len(elems)-1)]
 }
@@ -69,21 +57,8 @@ func (self *Segment) getFirst(h int32) *Element {
 func (self *Segment) SegGet(key KeyFace, hashv int32) (value interface{}, err error) {
 	if self.count != 0 {
 		e := self.getFirst(hashv)
-		for e != nil {
-			if e.HashValue != hashv {
-				e = e.Next
-				continue
-			}
-			if !key.Equals(e.Key) {
-				e = e.Next
-				continue
-			} else {
-				break
-			}
-			panic("find error!")
-		}
 		if e != nil {
-			value = e.Value
+			value, err = e.Get(key)
 		}
 	} else {
 		err = errors.New("there is no element!")
@@ -103,36 +78,25 @@ func (self *Segment) SegPut(key KeyFace, hashv int32, value interface{}) (old_va
 	c := self.count + 1
 	if c > self.threshold {
 		err = self.rehash() //存储空间增长
+		if err != nil {
+			panic(err.Error())
+		}
 	}
 
 	elems := self.Elements
 	index := hashv & int32(len(elems)-1)
-	first := elems[index]
-	e := first
-	for e != nil {
-		if e.HashValue != hashv {
-			e = e.Next
-			continue
-		}
-		if !key.Equals(e.Key) {
-			e = e.Next
-			continue
-		} else {
-			break
-		}
-		panic("find error!")
-	}
-
+	e := elems[index]
 	if e != nil {
-		old_value = e.Value
-		e.Value = value
+		old_value, err = e.UnsafePut(key, value)
+		if old_value != nil {
+			self.count = c
+		}
 	} else {
-		//self.modCount++
-		new_e := NewElement(hashv, key, value, first)
-		elems[index] = new_e
+		e = NewConcurrentSkipList()
+		e.UnsafePut(key, value)
+		elems[index] = e
 		self.count = c
 	}
-
 	return
 }
 
@@ -145,25 +109,24 @@ func (self *Segment) rehash() (err error) {
 		return
 	}
 
-	new_elems := make([]*Element, oldCapacity<<1)
+	new_elems := make([]*ConcurrentSkipList, oldCapacity<<1)
 	self.threshold = int(float64(len(new_elems)) * self.loadFactor)
 	sizeMask := int32(len(new_elems) - 1)
-	for i := 0; i < oldCapacity; i++ { //传统全部转移方式
+	for i := 0; i < oldCapacity; i++ {
 		e := old_elems[i]
 		if e != nil {
-
-			idx := e.HashValue & sizeMask
-
-			for e != nil {
+			iter := e.NewConnSkipListIterator()
+			for iter.HasNext() {
+				entry := iter.Next()
+				h := WJhash(int32(entry.Key.HashCode()))
+				idx := h & sizeMask
 				tmpelem := new_elems[idx]
-				new_e := NewElement(e.HashValue, e.Key, e.Value, tmpelem)
-				if new_e.Value == nil {
-					panic("rehash: value is nil!")
-				}
-				new_elems[idx] = new_e
-				e = e.Next
-				if e != nil {
-					idx = e.HashValue & sizeMask
+				if tmpelem != nil {
+					tmpelem.UnsafePut(entry.Key, entry.Value)
+				} else {
+					tmpelem = NewConcurrentSkipList()
+					tmpelem.UnsafePut(entry.Key, entry.Value)
+					new_elems[idx] = tmpelem
 				}
 			}
 		}
@@ -179,54 +142,12 @@ func (self *Segment) SegRemove(key KeyFace, hashv int32) (old_value interface{},
 	c := self.count - 1
 	elems := self.Elements
 	index := hashv & int32(len(elems)-1)
-	first := elems[index]
-	e := first
-	for e != nil {
-		if e.HashValue != hashv {
-			e = e.Next
-			continue
-		}
-		if !key.Equals(e.Key) {
-			e = e.Next
-			continue
-		} else {
-			break
-		}
-		panic("find error!")
-	}
-
+	e := elems[index]
 	if e != nil {
-		old_value = e.Value
-		//self.modCount++
-		//oldFirst := first
-		//newFirst := e.Next
-		//for oldFirst != e {
-		//	newFirst = NewElement(oldFirst.HashValue, oldFirst.Key, oldFirst.Value, newFirst)
-		//	oldFirst = oldFirst.Next
-		//}
-
-		//elems[index] = newFirst
-
-		if first == e {
-			elems[index] = e.Next
-		} else {
-			oldFirst := first
-			var newFirst *Element
-			for true {
-				newFirst = NewElement(oldFirst.HashValue, oldFirst.Key, oldFirst.Value, newFirst)
-				if oldFirst.Next == e {
-					oldFirst = oldFirst.Next.Next
-				} else {
-					oldFirst = oldFirst.Next
-				}
-				if oldFirst == nil {
-					break
-				}
-			}
-			elems[index] = newFirst
+		old_value, err = e.UnsafeRemove(key)
+		if old_value != nil {
+			self.count = c
 		}
-
-		self.count = c
 	}
 
 	return
@@ -339,16 +260,17 @@ func (self *ConcurrentHashMap) Size() int { //遗留方法
 type ConcurrentHashMapIterator struct { //迭代器
 	segments   []*Segment
 	segms_seek int
-	elems      []*Element
+	elems      []*ConcurrentSkipList
 	elems_seek int
-	elem       *Element
+	elemiter   Iterator
 }
 
 func (self *ConcurrentHashMap) NewConcurrentHashMapIterator() Iterator {
 	cmi := new(ConcurrentHashMapIterator)
-	cmi.segments = make([]*Segment, len(self.Segments))
 	for i := 0; i < len(self.Segments); i++ {
-		cmi.segments[i] = self.Segments[i]
+		if self.Segments[i].GetCount() != 0 { //过滤出有数据的段
+			cmi.segments = append(cmi.segments, self.Segments[i])
+		}
 	}
 	cmi.segms_seek = 0
 	cmi.elems_seek = -1
@@ -361,11 +283,13 @@ func (self *ConcurrentHashMapIterator) HasNext() bool {
 		return false
 	}
 
-	if self.elem != nil {
-		return true
+	if self.elemiter != nil {
+		if self.elemiter.HasNext() {
+			return true
+		}
 	}
 
-	var elem *Element
+	var elem *ConcurrentSkipList
 	for elem == nil {
 
 		if self.segms_seek >= len(self.segments) {
@@ -380,6 +304,9 @@ func (self *ConcurrentHashMapIterator) HasNext() bool {
 		for ; self.elems_seek < len(self.elems); self.elems_seek++ {
 			elem = self.elems[self.elems_seek]
 			if elem != nil {
+				if elem.Len() == 0 {
+					continue
+				}
 				self.elems_seek++ //无论有无数据都要向后移动指针
 				break
 			}
@@ -393,22 +320,21 @@ func (self *ConcurrentHashMapIterator) HasNext() bool {
 
 	}
 
-	self.elem = elem
 	if elem != nil {
-		return true
+		if elem.Len() > 0 {
+			self.elemiter = elem.NewConnSkipListIterator()
+			return true
+		}
 	}
+
 	return false
 }
 
 func (self *ConcurrentHashMapIterator) Next() *Entry {
 
 	var entry *Entry
-	if self.elem != nil {
-		elem := self.elem
-		entry = new(Entry)
-		entry.Key = elem.Key
-		entry.Value = elem.Value
-		self.elem = elem.Next
+	if self.elemiter != nil {
+		entry = self.elemiter.Next()
 	}
 
 	return entry
