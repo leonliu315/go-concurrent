@@ -346,10 +346,9 @@ type ConcurrentHashMapIterator struct { //迭代器
 
 func (self *ConcurrentHashMap) NewConcurrentHashMapIterator() Iterator {
 	cmi := new(ConcurrentHashMapIterator)
+	cmi.segments = make([]*Segment, len(self.Segments))
 	for i := 0; i < len(self.Segments); i++ {
-		if self.Segments[i].GetCount() != 0 { //过滤出有数据的段
-			cmi.segments = append(cmi.segments, self.Segments[i])
-		}
+		cmi.segments[i] = self.Segments[i]
 	}
 	cmi.segms_seek = 0
 	cmi.elems_seek = -1
