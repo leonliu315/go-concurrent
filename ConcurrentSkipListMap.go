@@ -40,13 +40,13 @@ func (self *Random) Next() uint32 {
 }
 
 type node struct {
+	deleted     int32 //alignment
+	fullyLinked int32
 	forward     []*node
 	prevnode    *node
 	key         KeyFace
 	value       interface{}
 	level       int
-	deleted     int32
-	fullyLinked int32
 	m           Mutex
 }
 
