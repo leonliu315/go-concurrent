@@ -161,10 +161,51 @@ func search_helper(key KeyFace, current *node, preds []*node, succs []*node) int
 	return found
 }
 
+func fast_search_helper(key KeyFace, current *node, preds []*node, succs []*node) int { //快速搜索辅助
+	depth := MAX_LEVEL - 1
+	//j := 0
+	found := -1
+	var pred, curr *node
+	pred = current
+	for i := depth; i >= 0; i-- {
+		curr = pred.forward[i]
+		for curr != nil {
+			if curr.key != nil { //head和tail的key为nil
+				//if curr.key.HashCode() < key.HashCode() {
+				if curr.key.Less(key) {
+					pred = curr
+					curr = pred.forward[i]
+					//j++
+				} else {
+					break
+				}
+			} else {
+				break
+			}
+		}
+		if preds != nil {
+			preds[i] = pred
+		}
+		if succs != nil {
+			succs[i] = curr
+		}
+		if found == -1 {
+			if curr.key != nil {
+				//if curr.key.HashCode() == key.HashCode() {
+				if curr.key.Equals(key) {
+					return i
+				}
+			}
+		}
+	}
+	//log.Println("find times is : ", j)
+	return found
+}
+
 func (self *ConcurrentSkipList) Get(key KeyFace) (value interface{}, err error) {
 	//succs := make([]*node, MAX_LEVEL)
 	var succs [MAX_LEVEL]*node
-	found := search_helper(key, self.header, nil, succs[:])
+	found := fast_search_helper(key, self.header, nil, succs[:])
 	if found != -1 {
 		pnode_curr := succs[found]
 		if pnode_curr != nil {
@@ -482,8 +523,11 @@ func (self *ConcurrentSkipList) GetNext(key KeyFace) (value interface{}, err err
 	var succs [MAX_LEVEL]*node
 	found := search_helper(key, self.header, nil, succs[:])
 	if found != -1 {
-		pnode_curr := succs[0]
+		pnode_curr := succs[0].forward[0]
 		if pnode_curr != nil {
+			if pnode_curr == self.tailer {
+				err = errors.New("no element in the list!")
+			}
 			if pnode_curr.key != nil {
 				value = pnode_curr.value
 			} else {
