@@ -92,7 +92,9 @@ func (self *Segment) SegPut(key KeyFace, hashv int32, value interface{}) (old_va
 			self.count = c
 		}
 	} else {
-		e = NewConcurrentSkipList()
+		//e = NewConcurrentSkipList()
+		e = new(ConcurrentSkipList)
+		e.InitWithLevel(3)
 		e.UnsafePut(key, value)
 		elems[index] = e
 		self.count = c
@@ -124,7 +126,9 @@ func (self *Segment) rehash() (err error) {
 				if tmpelem != nil {
 					tmpelem.UnsafePut(entry.Key, entry.Value)
 				} else {
-					tmpelem = NewConcurrentSkipList()
+					//tmpelem = NewConcurrentSkipList()
+					tmpelem = new(ConcurrentSkipList)
+					tmpelem.InitWithLevel(3)
 					tmpelem.UnsafePut(entry.Key, entry.Value)
 					new_elems[idx] = tmpelem
 				}

@@ -77,12 +77,31 @@ type ConcurrentSkipList struct {
 	tailer *node
 	header *node
 	rng    *Random
+	level  int
 }
 
 func NewConcurrentSkipList() *ConcurrentSkipList {
 	ret := new(ConcurrentSkipList)
 	ret.Init()
 	return ret
+}
+
+func (self *ConcurrentSkipList) InitWithLevel(lv int) {
+	sltail := new(node)
+	slhead := new(node)
+	sltail.level = lv
+	slhead.level = 1
+	sltail.forward = make([]*node, lv)
+	slhead.forward = make([]*node, lv)
+	for i := 0; i < len(slhead.forward); i++ {
+		slhead.forward[i] = sltail
+	}
+	slhead.fullyLinked = 1
+	sltail.fullyLinked = 1
+	self.header = slhead
+	self.tailer = sltail
+	self.rng = NewRandom(0xdeadbeef)
+	self.level = lv
 }
 
 func (self *ConcurrentSkipList) Init() {
@@ -100,6 +119,7 @@ func (self *ConcurrentSkipList) Init() {
 	self.header = slhead
 	self.tailer = sltail
 	self.rng = NewRandom(0xdeadbeef)
+	self.level = MAX_LEVEL
 }
 
 func (self *ConcurrentSkipList) Len() int32 { //弱一致性
@@ -107,21 +127,21 @@ func (self *ConcurrentSkipList) Len() int32 { //弱一致性
 }
 
 func (self *ConcurrentSkipList) Level() int {
-	return MAX_LEVEL
+	return self.level
 }
 
 func (self *ConcurrentSkipList) randomLevel() int {
 	level := 1
 	kBranching := uint32(4)
-	for (self.rng.Next()%kBranching == 0) && level < MAX_LEVEL {
+	for (self.rng.Next()%kBranching == 0) && level < self.level {
 		level++
 	}
 	return level
 
 }
 
-func search_helper(key KeyFace, current *node, preds []*node, succs []*node) int { //搜索辅助
-	depth := MAX_LEVEL - 1
+func (self *ConcurrentSkipList) search_helper(key KeyFace, current *node, preds []*node, succs []*node) int { //搜索辅助
+	depth := self.level - 1
 	//j := 0
 	found := -1
 	var pred, curr *node
@@ -161,8 +181,8 @@ func search_helper(key KeyFace, current *node, preds []*node, succs []*node) int
 	return found
 }
 
-func fast_search_helper(key KeyFace, current *node, preds []*node, succs []*node) int { //快速搜索辅助
-	depth := MAX_LEVEL - 1
+func (self *ConcurrentSkipList) fast_search_helper(key KeyFace, current *node, preds []*node, succs []*node) int { //快速搜索辅助
+	depth := self.level - 1
 	//j := 0
 	found := -1
 	var pred, curr *node
@@ -203,9 +223,8 @@ func fast_search_helper(key KeyFace, current *node, preds []*node, succs []*node
 }
 
 func (self *ConcurrentSkipList) Get(key KeyFace) (value interface{}, err error) {
-	//succs := make([]*node, MAX_LEVEL)
-	var succs [MAX_LEVEL]*node
-	found := fast_search_helper(key, self.header, nil, succs[:])
+	succs := make([]*node, self.level)
+	found := self.fast_search_helper(key, self.header, nil, succs)
 	if found != -1 {
 		pnode_curr := succs[found]
 		if pnode_curr != nil {
@@ -229,16 +248,14 @@ func (self *ConcurrentSkipList) Put(key KeyFace, value interface{}) (old_value i
 		return
 	}
 
-	//preds := make([]*node, MAX_LEVEL)
-	//succs := make([]*node, MAX_LEVEL)
-	var preds [MAX_LEVEL]*node
-	var succs [MAX_LEVEL]*node
+	preds := make([]*node, self.level)
+	succs := make([]*node, self.level)
 	newLevel := self.randomLevel()
 	waittimedelta := time.Duration(1) //sleep时间
 
 	for {
 
-		found := search_helper(key, self.header, preds[:], succs[:])
+		found := self.search_helper(key, self.header, preds, succs)
 		if found != -1 { //之前已经插入过，更新之前的值即可
 			pnode_curr := succs[found]
 			if atomic.LoadInt32(&pnode_curr.deleted) != 1 {
@@ -329,13 +346,11 @@ func (self *ConcurrentSkipList) UnsafePut(key KeyFace, value interface{}) (old_v
 		return
 	}
 
-	//preds := make([]*node, MAX_LEVEL)
-	//succs := make([]*node, MAX_LEVEL)
-	var preds [MAX_LEVEL]*node
-	var succs [MAX_LEVEL]*node
+	preds := make([]*node, self.level)
+	succs := make([]*node, self.level)
 	newLevel := self.randomLevel()
 
-	found := search_helper(key, self.header, preds[:], succs[:])
+	found := self.search_helper(key, self.header, preds, succs)
 	if found != -1 { //之前已经插入过，更新之前的值即可
 		pnode_curr := succs[found]
 		if pnode_curr.key != nil {
@@ -369,15 +384,13 @@ func (self *ConcurrentSkipList) Remove(key KeyFace) (value interface{}, err erro
 		return
 	}
 
-	//preds := make([]*node, MAX_LEVEL)
-	//succs := make([]*node, MAX_LEVEL)
-	var preds [MAX_LEVEL]*node
-	var succs [MAX_LEVEL]*node
+	preds := make([]*node, self.level)
+	succs := make([]*node, self.level)
 	waittimedelta := time.Duration(1)
 
 	for {
 
-		found := search_helper(key, self.header, preds[:], succs[:])
+		found := self.search_helper(key, self.header, preds, succs)
 
 		if found == -1 {
 			err = errors.New("cant find the element!")
@@ -466,12 +479,10 @@ func (self *ConcurrentSkipList) UnsafeRemove(key KeyFace) (value interface{}, er
 		return
 	}
 
-	//preds := make([]*node, MAX_LEVEL)
-	//succs := make([]*node, MAX_LEVEL)
-	var preds [MAX_LEVEL]*node
-	var succs [MAX_LEVEL]*node
+	preds := make([]*node, self.level)
+	succs := make([]*node, self.level)
 
-	found := search_helper(key, self.header, preds[:], succs[:])
+	found := self.search_helper(key, self.header, preds, succs)
 
 	if found == -1 {
 		err = errors.New("cant find the element!")
@@ -497,10 +508,9 @@ func (self *ConcurrentSkipList) UnsafeRemove(key KeyFace) (value interface{}, er
 }
 
 func (self *ConcurrentSkipList) GetPrev(key KeyFace) (value interface{}, err error) {
-	//succs := make([]*node, MAX_LEVEL)
-	var preds [MAX_LEVEL]*node
-	var succs [MAX_LEVEL]*node
-	found := search_helper(key, self.header, preds[:], succs[:])
+	preds := make([]*node, self.level)
+	succs := make([]*node, self.level)
+	found := self.search_helper(key, self.header, preds, succs)
 	if found != -1 {
 		pnode_curr := preds[0]
 		if pnode_curr != nil {
@@ -519,9 +529,8 @@ func (self *ConcurrentSkipList) GetPrev(key KeyFace) (value interface{}, err err
 }
 
 func (self *ConcurrentSkipList) GetNext(key KeyFace) (value interface{}, err error) {
-	//succs := make([]*node, MAX_LEVEL)
-	var succs [MAX_LEVEL]*node
-	found := search_helper(key, self.header, nil, succs[:])
+	succs := make([]*node, self.level)
+	found := self.search_helper(key, self.header, nil, succs)
 	if found != -1 {
 		pnode_curr := succs[0].forward[0]
 		if pnode_curr != nil {
