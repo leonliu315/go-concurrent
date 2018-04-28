@@ -6,6 +6,7 @@ import (
 	//"bytes"
 	//"encoding/binary"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	//"unsafe"
 )
@@ -122,6 +123,39 @@ func (self *StrKey) Less(o interface{}) bool {
 }
 
 func (self *StrKey) GetValue() string {
+	return self.keystr
+}
+
+type CStrKey struct {
+	keystr string
+}
+
+func NewCStrKey(k string) *CStrKey {
+	ret := new(CStrKey)
+	ret.Init(k)
+	return ret
+}
+
+func (self *CStrKey) Init(k string) {
+	self.keystr = k
+}
+
+func (self *CStrKey) HashCode() uint64 {
+	return uint64(MurmurHash3_32([]byte(self.keystr), 0x9747b28c))
+}
+
+func (self *CStrKey) Equals(o interface{}) bool {
+	tmpStrKey := o.(*CStrKey)
+	//fmt.Println("Equals")
+	return strings.Compare(self.keystr, tmpStrKey.keystr) == 0
+}
+
+func (self *CStrKey) Less(o interface{}) bool {
+	tmpStrKey := o.(*CStrKey)
+	return strings.Compare(self.keystr, tmpStrKey.keystr) == -1
+}
+
+func (self *CStrKey) GetValue() string {
 	return self.keystr
 }
 
