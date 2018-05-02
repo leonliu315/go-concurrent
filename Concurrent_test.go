@@ -347,3 +347,27 @@ func Test_skiplistprev(t *testing.T) {
 	entry := skiplist.GetLast()
 	log.Println("key, value : ", entry.Key, entry.Value)
 }
+
+func Test_skiplistseek(t *testing.T) {
+	skiplist := NewConcurrentSkipList()
+
+	key := NewCStrKey("1")
+
+	skiplist.Put(key, "1")
+
+	key = NewCStrKey("15")
+
+	skiplist.Put(key, "15")
+
+	key = NewCStrKey("13")
+
+	skiplist.Put(key, "13")
+
+	iter := skiplist.Seek(NewCStrKey("11"))
+	//	iter := skiplist.NewConnSkipListIterator()
+	for iter.HasNext() {
+		entry := iter.Next()
+		log.Println(entry.Key.(*CStrKey).GetValue(), entry.Value)
+	}
+
+}

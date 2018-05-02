@@ -2,8 +2,8 @@ package concurrent
 
 import (
 	"errors"
-	"log"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -78,6 +78,7 @@ type ConcurrentSkipList struct {
 	header *node
 	rng    *Random
 	level  int
+	apool  *sync.Pool
 }
 
 func NewConcurrentSkipList() *ConcurrentSkipList {
@@ -102,6 +103,11 @@ func (self *ConcurrentSkipList) InitWithLevel(lv int) {
 	self.tailer = sltail
 	self.rng = NewRandom(0xdeadbeef)
 	self.level = lv
+	self.apool = &sync.Pool{
+		New: func() interface{} {
+			return make([]*node, self.level)
+		},
+	}
 }
 
 func (self *ConcurrentSkipList) Init() {
@@ -120,6 +126,11 @@ func (self *ConcurrentSkipList) Init() {
 	self.tailer = sltail
 	self.rng = NewRandom(0xdeadbeef)
 	self.level = MAX_LEVEL
+	self.apool = &sync.Pool{
+		New: func() interface{} {
+			return make([]*node, self.level)
+		},
+	}
 }
 
 func (self *ConcurrentSkipList) Len() int32 { //弱一致性
@@ -223,7 +234,14 @@ func (self *ConcurrentSkipList) fast_search_helper(key KeyFace, current *node, p
 }
 
 func (self *ConcurrentSkipList) Get(key KeyFace) (value interface{}, err error) {
-	succs := make([]*node, self.level)
+	//	succs := make([]*node, self.level)
+	succs := self.apool.Get().([]*node)
+	defer func() {
+		for i := 0; i < self.level; i++ {
+			succs[i] = nil
+		}
+		self.apool.Put(succs)
+	}()
 	found := self.fast_search_helper(key, self.header, nil, succs)
 	if found != -1 {
 		pnode_curr := succs[found]
@@ -248,8 +266,18 @@ func (self *ConcurrentSkipList) Put(key KeyFace, value interface{}) (old_value i
 		return
 	}
 
-	preds := make([]*node, self.level)
-	succs := make([]*node, self.level)
+	//	preds := make([]*node, self.level)
+	//	succs := make([]*node, self.level)
+	preds := self.apool.Get().([]*node)
+	succs := self.apool.Get().([]*node)
+	defer func() {
+		for i := 0; i < self.level; i++ {
+			preds[i] = nil
+			succs[i] = nil
+		}
+		self.apool.Put(preds)
+		self.apool.Put(succs)
+	}()
 	newLevel := self.randomLevel()
 	waittimedelta := time.Duration(1) //sleep时间
 
@@ -260,7 +288,7 @@ func (self *ConcurrentSkipList) Put(key KeyFace, value interface{}) (old_value i
 			pnode_curr := succs[found]
 			if atomic.LoadInt32(&pnode_curr.deleted) != 1 {
 				for atomic.LoadInt32(&pnode_curr.fullyLinked) != 1 {
-					log.Println("wait fullyLinked!")
+					//log.Println("wait fullyLinked!")
 					runtime.Gosched()
 				}
 				if pnode_curr.key != nil {
@@ -290,17 +318,18 @@ func (self *ConcurrentSkipList) Put(key KeyFace, value interface{}) (old_value i
 				}
 			}
 
-			if (atomic.LoadInt32(&pred.deleted) == 1) || (pred.forward[i] != succ) {
+			if (atomic.LoadInt32(&pred.deleted) == 1) || (atomic.LoadInt32(&succ.deleted) == 1) || (pred.forward[i] != succ) { //如果关系链没有设置完成,则前继的跳跃节点有可能会出问题,通过前后对比实现(atomic.LoadInt32(&pred.fullyLinked) == 0)
 				lockok = false
 				break
 			}
-			if pred.forward[i].key != nil {
-				//if pred.forward[i].key.HashCode() == key.HashCode() {
-				if pred.forward[i].key.Equals(key) {
-					lockok = false
-					break
-				}
-			}
+
+			//if pred.forward[i].key != nil { //必须锁住前继的条件下不会出现相同的key
+			//	//if pred.forward[i].key.HashCode() == key.HashCode() {
+			//	if pred.forward[i].key.Equals(key) {
+			//		lockok = false
+			//		break
+			//	}
+			//}
 		}
 
 		if lockok == false {
@@ -346,8 +375,18 @@ func (self *ConcurrentSkipList) UnsafePut(key KeyFace, value interface{}) (old_v
 		return
 	}
 
-	preds := make([]*node, self.level)
-	succs := make([]*node, self.level)
+	//	preds := make([]*node, self.level)
+	//	succs := make([]*node, self.level)
+	preds := self.apool.Get().([]*node)
+	succs := self.apool.Get().([]*node)
+	defer func() {
+		for i := 0; i < self.level; i++ {
+			preds[i] = nil
+			succs[i] = nil
+		}
+		self.apool.Put(preds)
+		self.apool.Put(succs)
+	}()
 	newLevel := self.randomLevel()
 
 	found := self.search_helper(key, self.header, preds, succs)
@@ -384,8 +423,18 @@ func (self *ConcurrentSkipList) Remove(key KeyFace) (value interface{}, err erro
 		return
 	}
 
-	preds := make([]*node, self.level)
-	succs := make([]*node, self.level)
+	//	preds := make([]*node, self.level)
+	//	succs := make([]*node, self.level)
+	preds := self.apool.Get().([]*node)
+	succs := self.apool.Get().([]*node)
+	defer func() {
+		for i := 0; i < self.level; i++ {
+			preds[i] = nil
+			succs[i] = nil
+		}
+		self.apool.Put(preds)
+		self.apool.Put(succs)
+	}()
 	waittimedelta := time.Duration(1)
 
 	for {
@@ -479,8 +528,18 @@ func (self *ConcurrentSkipList) UnsafeRemove(key KeyFace) (value interface{}, er
 		return
 	}
 
-	preds := make([]*node, self.level)
-	succs := make([]*node, self.level)
+	//	preds := make([]*node, self.level)
+	//	succs := make([]*node, self.level)
+	preds := self.apool.Get().([]*node)
+	succs := self.apool.Get().([]*node)
+	defer func() {
+		for i := 0; i < self.level; i++ {
+			preds[i] = nil
+			succs[i] = nil
+		}
+		self.apool.Put(preds)
+		self.apool.Put(succs)
+	}()
 
 	found := self.search_helper(key, self.header, preds, succs)
 
@@ -508,8 +567,18 @@ func (self *ConcurrentSkipList) UnsafeRemove(key KeyFace) (value interface{}, er
 }
 
 func (self *ConcurrentSkipList) GetPrev(key KeyFace) (value interface{}, err error) {
-	preds := make([]*node, self.level)
-	succs := make([]*node, self.level)
+	//	preds := make([]*node, self.level)
+	//	succs := make([]*node, self.level)
+	preds := self.apool.Get().([]*node)
+	succs := self.apool.Get().([]*node)
+	defer func() {
+		for i := 0; i < self.level; i++ {
+			preds[i] = nil
+			succs[i] = nil
+		}
+		self.apool.Put(preds)
+		self.apool.Put(succs)
+	}()
 	found := self.search_helper(key, self.header, preds, succs)
 	if found != -1 {
 		pnode_curr := preds[0]
@@ -529,7 +598,14 @@ func (self *ConcurrentSkipList) GetPrev(key KeyFace) (value interface{}, err err
 }
 
 func (self *ConcurrentSkipList) GetNext(key KeyFace) (value interface{}, err error) {
-	succs := make([]*node, self.level)
+	//	succs := make([]*node, self.level)
+	succs := self.apool.Get().([]*node)
+	defer func() {
+		for i := 0; i < self.level; i++ {
+			succs[i] = nil
+		}
+		self.apool.Put(succs)
+	}()
 	found := self.search_helper(key, self.header, nil, succs)
 	if found != -1 {
 		pnode_curr := succs[0].forward[0]
@@ -591,6 +667,40 @@ type ConnSkipListIterator struct { //迭代器
 	curr   *node
 	header *node
 	tailer *node
+}
+
+func (self *ConcurrentSkipList) Seek(key KeyFace) Iterator {
+
+	current := self.header
+
+	depth := self.level - 1
+	var pred, curr *node
+	pred = current
+	for i := depth; i >= 0; i-- {
+		curr = pred.forward[i]
+		for curr != nil {
+			if curr.key != nil { //head和tail的key为nil
+				//if curr.key.HashCode() < key.HashCode() {
+				if curr.key.Less(key) {
+					pred = curr
+					curr = pred.forward[i]
+					//j++
+				} else {
+					break
+				}
+			} else {
+				break
+			}
+		}
+
+	}
+
+	ret := new(ConnSkipListIterator)
+	ret.slist = self
+	ret.curr = pred
+	ret.header = self.header
+	ret.tailer = self.tailer
+	return ret
 }
 
 func (self *ConcurrentSkipList) NewConnSkipListIterator() Iterator {
