@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync/atomic"
 	//"unsafe"
-	gocrc16 "github.com/joaojeronimo/go-crc16"
 )
 
 type KeyFace interface {
@@ -486,7 +485,7 @@ func NewStr16Key(k string) *Str16Key {
 }
 
 func (self *Str16Key) Init(k string) {
-	self.hashv = gocrc16.Kermit([]byte(k))
+	self.hashv = crc16(k)
 	self.keystr = k
 }
 
