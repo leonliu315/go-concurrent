@@ -31,12 +31,16 @@ func (self *Random) Init(s uint32) {
 }
 
 func (self *Random) Next() uint32 {
-	product := uint64(self.seed_) * A
-	self.seed_ = uint32((product >> 31) + (product & uint64(M)))
-	if self.seed_ > M {
-		self.seed_ -= M
+	//seed_old := atomic.LoadUint32(&self.seed_)
+	seed_old := self.seed_
+	seed_ := seed_old
+	product := uint64(seed_) * A
+	seed_ = uint32((product >> 31) + (product & uint64(M)))
+	if seed_ > M {
+		seed_ -= M
 	}
-	return self.seed_
+	atomic.CompareAndSwapUint32(&self.seed_, seed_old, seed_)
+	return seed_
 }
 
 type node struct {
@@ -278,10 +282,12 @@ func (self *ConcurrentSkipList) Put(key KeyFace, value interface{}) (old_value i
 		self.apool.Put(preds)
 		self.apool.Put(succs)
 	}()
-	newLevel := self.randomLevel()
+
 	waittimedelta := time.Duration(1) //sleep时间
 
 	for {
+
+		newLevel := self.randomLevel()
 
 		found := self.search_helper(key, self.header, preds, succs)
 		if found != -1 { //之前已经插入过，更新之前的值即可
