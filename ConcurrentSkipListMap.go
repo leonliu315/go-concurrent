@@ -453,9 +453,7 @@ func (self *ConcurrentSkipList) Remove(key KeyFace) (value interface{}, err erro
 		}
 
 		pnode_curr := succs[found]
-		if pnode_curr.key != nil {
-			value = pnode_curr.value
-		} else {
+		if pnode_curr.key == nil {
 			err = errors.New("cant match the element!")
 			return
 		}
@@ -517,6 +515,8 @@ func (self *ConcurrentSkipList) Remove(key KeyFace) (value interface{}, err erro
 		for k, _ := range node_set {
 			k.m.Unlock()
 		}
+
+		value = pnode_curr.value
 
 		atomic.AddInt32(&self.length, int32(-1))
 
